@@ -5,30 +5,29 @@ import uvicorn
 
 app = FastAPI()
 
-def get_audio_stream(video_id: str):
+import yt_dlp
+
+# Changed to 'def' (sync) so FastAPI runs it in a thread pool, preventing event loop blocking
+@app.get("/mp3/{video_id}")
+def stream_mp3(video_id: str):
+    print(f"Processing video: {video_id}")
     video_url = f"https://www.youtube.com/watch?v={video_id}"
     
-    # 1. Get the URL of the best audio stream
-    # We use yt-dlp to dump json and parse it, or just use -g to get the url
-    # Using 'g' (get-url) is faster. -f bestaudio ensures we get audio.
-    # We will pipe this URL into ffmpeg.
-    
-    # Improved command to avoid blocks and fail fast
-    yt_cmd = [
-        "yt-dlp",
-        "-g",
-        "-f", "bestaudio",
-        "--extractor-args", "youtube:player_client=android",
-        "--socket-timeout", "10",
-        video_url
-    ]
-    
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+        'noplaylist': True,
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+        'socket_timeout': 10,
+    }
+
     try:
-        audio_source_url = subprocess.check_output(yt_cmd, stderr=subprocess.PIPE).decode("utf-8").strip()
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.decode("utf-8")
-        print(f"Error getting URL from yt-dlp: {error_msg}")
-        raise Exception(f"yt-dlp failed: {error_msg}")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            audio_source_url = info['url']
+            
+    except Exception as e:
+        return Response(content=f"Error extracting URL ({type(e).__name__}): {str(e)}", status_code=500)
 
     # 2. Convert to MP3 64k using ffmpeg and stream to stdout
     ffmpeg_cmd = [
@@ -41,35 +40,29 @@ def get_audio_stream(video_id: str):
         "pipe:1"
     ]
     
+    # We use a try/finally block or similar if we wanted to be safer, 
+    # but for a simple stream, this is okay.
     process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    return process.stdout
-
-# Changed to 'def' (sync) so FastAPI runs it in a thread pool, preventing event loop blocking
-@app.get("/mp3/{video_id}")
-def stream_mp3(video_id: str):
-    print(f"Processing video: {video_id}")
-    try:
-        audio_stream = get_audio_stream(video_id)
-        if not audio_stream:
-             return Response(content="Error processing video: Audio stream is None", status_code=500)
-    except Exception as e:
-        return Response(content=f"Error processing video: {str(e)}", status_code=500)
-
+    
     def iterfile():
         try:
             while True:
-                data = audio_stream.read(4096)
+                data = process.stdout.read(4096)
                 if not data:
                     break
                 yield data
         except Exception:
             pass
+        finally:
+            process.stdout.close()
+            process.wait()
             
     headers = {
         'Content-Disposition': f'attachment; filename="{video_id}.mp3"'
     }
     
     return Response(content=iterfile(), media_type="audio/mpeg", headers=headers)
+
 
 @app.get("/")
 async def index():
