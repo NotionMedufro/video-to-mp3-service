@@ -13,11 +13,13 @@ def get_audio_stream(video_id: str):
     # Using 'g' (get-url) is faster. -f bestaudio ensures we get audio.
     # We will pipe this URL into ffmpeg.
     
-    # Command to get audio URL
+    # Improved command to avoid blocks and fail fast
     yt_cmd = [
         "yt-dlp",
         "-g",
         "-f", "bestaudio",
+        "--extractor-args", "youtube:player_client=ios",
+        "--socket-timeout", "10",
         video_url
     ]
     
@@ -29,12 +31,6 @@ def get_audio_stream(video_id: str):
         raise Exception(f"yt-dlp failed: {error_msg}")
 
     # 2. Convert to MP3 64k using ffmpeg and stream to stdout
-    # -i <url> : input
-    # -vn : no video
-    # -acodec libmp3lame : mp3 codec
-    # -ab 64k : audio bitrate 64k
-    # -f mp3 : format mp3
-    # pipe:1 : output to stdout
     ffmpeg_cmd = [
         "ffmpeg",
         "-i", audio_source_url,
@@ -48,8 +44,10 @@ def get_audio_stream(video_id: str):
     process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     return process.stdout
 
+# Changed to 'def' (sync) so FastAPI runs it in a thread pool, preventing event loop blocking
 @app.get("/mp3/{video_id}")
-async def stream_mp3(video_id: str):
+def stream_mp3(video_id: str):
+    print(f"Processing video: {video_id}")
     try:
         audio_stream = get_audio_stream(video_id)
         if not audio_stream:
