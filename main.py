@@ -22,10 +22,11 @@ def get_audio_stream(video_id: str):
     ]
     
     try:
-        audio_source_url = subprocess.check_output(yt_cmd).decode("utf-8").strip()
+        audio_source_url = subprocess.check_output(yt_cmd, stderr=subprocess.PIPE).decode("utf-8").strip()
     except subprocess.CalledProcessError as e:
-        print(f"Error getting URL from yt-dlp: {e}")
-        return None
+        error_msg = e.stderr.decode("utf-8")
+        print(f"Error getting URL from yt-dlp: {error_msg}")
+        raise Exception(f"yt-dlp failed: {error_msg}")
 
     # 2. Convert to MP3 64k using ffmpeg and stream to stdout
     # -i <url> : input
@@ -49,18 +50,22 @@ def get_audio_stream(video_id: str):
 
 @app.get("/mp3/{video_id}")
 async def stream_mp3(video_id: str):
-    # This is a generator that yield chunks of data
-    audio_stream = get_audio_stream(video_id)
-    
-    if not audio_stream:
-        return Response(content="Error processing video", status_code=500)
+    try:
+        audio_stream = get_audio_stream(video_id)
+        if not audio_stream:
+             return Response(content="Error processing video: Audio stream is None", status_code=500)
+    except Exception as e:
+        return Response(content=f"Error processing video: {str(e)}", status_code=500)
 
     def iterfile():
-        while True:
-            data = audio_stream.read(4096)
-            if not data:
-                break
-            yield data
+        try:
+            while True:
+                data = audio_stream.read(4096)
+                if not data:
+                    break
+                yield data
+        except Exception:
+            pass
             
     headers = {
         'Content-Disposition': f'attachment; filename="{video_id}.mp3"'
