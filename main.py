@@ -18,7 +18,7 @@ def get_audio_stream(video_id: str):
         "yt-dlp",
         "-g",
         "-f", "bestaudio",
-        "--extractor-args", "youtube:player_client=ios",
+        "--extractor-args", "youtube:player_client=android",
         "--socket-timeout", "10",
         video_url
     ]
